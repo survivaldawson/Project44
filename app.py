@@ -163,18 +163,62 @@ def home(): return render_template("index.html")
 @app.route("/health")
 def health(): return jsonify(status="online",project="Project 44")
 
-@app.route("/api/status")
-def status_api():
-    u=user_from_request()
-    if not u: return jsonify(message="Authentication failed."),401
-    create_user(u); uid=int(u["id"])
-    with get_db() as d:
-        pts=available_points(d,uid)
-        ads=d.execute("SELECT COUNT(*) n FROM reward_ledger WHERE user_id=? AND reason='verified_ad'",(uid,)).fetchone()["n"]
-        refs=d.execute("SELECT COUNT(*) n FROM referrals WHERE referrer_id=? AND status='verified'",(uid,)).fetchone()["n"]
-    return jsonify(points=pts,completed_ads=ads,verified_referrals=refs,
-        rates={"stars_per_500_points":100,"usd_per_point":USD_PER_POINT,
-               "ATF":ASSET_RATES["ATF"],"GRAM":ASSET_RATES["GRAM"],"USDT":ASSET_RATES["USDT"]})
+
+@app.route("/api/status", methods=["GET"])
+def api_status():
+    user = require_user()
+
+    if not user:
+        app.logger.warning("Project44: Telegram authentication failed")
+        return jsonify({
+            "registered": False,
+            "message": "Telegram authentication failed"
+        }), 401
+
+    try:
+        create_user(user)
+        user_id = int(user["id"])
+
+        with get_db() as db:
+            account = db.execute(
+                "SELECT * FROM users WHERE user_id = ?",
+                (user_id,)
+            ).fetchone()
+
+            if not account:
+                app.logger.error(
+                    "Project44: create_user ran but user was not saved: %s",
+                    user_id
+                )
+                return jsonify({
+                    "registered": False,
+                    "message": "User creation failed"
+                }), 500
+
+            available = get_available_points(db, user_id)
+
+            completed_ads = db.execute("""
+                SELECT COUNT(*) AS total
+                FROM reward_ledger
+                WHERE user_id = ?
+                AND reason = 'verified_ad'
+            """, (user_id,)).fetchone()["total"]
+
+        return jsonify({
+            "registered": True,
+            "points": available,
+            "completed_ads": completed_ads,
+            "message": "User successfully registered"
+        })
+
+    except Exception:
+        app.logger.exception("Project44 registration error")
+        return jsonify({
+            "registered": False,
+            "message": "Internal registration error"
+        }), 500
+        
+    
 
 @app.route("/api/ad/start",methods=["POST"])
 def ad_start():
