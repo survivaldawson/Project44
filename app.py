@@ -59,6 +59,31 @@ def init_db():
             if col not in cols:
                 d.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
 init_db()
+@app.route("/debug/database")
+def debug_database():
+    try:
+        with get_db() as db:
+            users = db.execute(
+                "SELECT COUNT(*) FROM users"
+            ).fetchone()[0]
+
+            tables = db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type = 'table'
+            """).fetchall()
+
+        return jsonify({
+            "database": DATABASE_PATH,
+            "connected": True,
+            "users_registered": users,
+            "tables": [row["name"] for row in tables]
+        })
+
+    except Exception as error:
+        return jsonify({
+            "connected": False,
+            "error": str(error)
+        }), 500
 
 def tg_send(chat_id, text):
     if not BOT_TOKEN or not chat_id: return False
