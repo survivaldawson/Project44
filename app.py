@@ -168,8 +168,13 @@ def notify_user(user_id, message):
 
 def verify_telegram_init_data(init_data):
 
-    if not BOT_TOKEN or not init_data:
-        return None
+    if not BOT_TOKEN:
+    print("AUTH ERROR: BOT_TOKEN missing")
+    return None
+
+if not init_data:
+    print("AUTH ERROR: initData missing")
+    return None
 
     try:
 
@@ -211,10 +216,13 @@ def verify_telegram_init_data(init_data):
         ).hexdigest()
 
         if not hmac.compare_digest(
-            calculated_hash,
-            received_hash
-        ):
-            return None
+    calculated_hash,
+    received_hash
+):
+    print("AUTH ERROR: Telegram initData hash mismatch")
+    return None
+
+print("AUTH SUCCESS: Telegram initData verified")
 
         user_data = json.loads(parsed.get("user", "{}"))
 
