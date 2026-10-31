@@ -166,18 +166,17 @@ def notify_user(user_id, message):
 # 4. TELEGRAM MINI APP AUTHENTICATION
 # ==========================================
 
-def verify_telegram_init_data(init_data):
 
+def verify_telegram_init_data(init_data):
     if not BOT_TOKEN:
         print("AUTH ERROR: BOT_TOKEN missing")
-    return None
+        return None
 
     if not init_data:
-      print("AUTH ERROR: initData missing")
-    return None
+        print("AUTH ERROR: initData missing")
+        return None
 
     try:
-
         parsed = dict(
             urllib.parse.parse_qsl(
                 init_data,
@@ -188,14 +187,15 @@ def verify_telegram_init_data(init_data):
         received_hash = parsed.pop("hash", None)
 
         if not received_hash:
+            print("AUTH ERROR: hash missing")
             return None
 
         auth_date = int(parsed.get("auth_date", 0))
-
         current_time = datetime.now(timezone.utc).timestamp()
 
         # Reject expired authentication data.
         if current_time - auth_date > 3600:
+            print("AUTH ERROR: initData expired")
             return None
 
         data_check_string = "\n".join(
@@ -215,7 +215,8 @@ def verify_telegram_init_data(init_data):
             hashlib.sha256
         ).hexdigest()
 
-                if not hmac.compare_digest(
+        # Verify Telegram's authentication hash.
+        if not hmac.compare_digest(
             calculated_hash,
             received_hash
         ):
@@ -227,6 +228,7 @@ def verify_telegram_init_data(init_data):
         user_data = json.loads(parsed.get("user", "{}"))
 
         if not user_data.get("id"):
+            print("AUTH ERROR: Telegram user ID missing")
             return None
 
         return user_data
@@ -234,6 +236,7 @@ def verify_telegram_init_data(init_data):
     except (ValueError, TypeError, json.JSONDecodeError) as e:
         print(f"AUTH ERROR: {e}")
         return None
+        
 
 def require_user():
 
