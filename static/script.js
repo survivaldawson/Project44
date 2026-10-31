@@ -143,11 +143,24 @@ function loadTelegramProfile() {
 // 7. LOAD USER DASHBOARD
 // =========================================
 
-async function loadDashboard() {
 
+async function loadDashboard() {
     try {
+        if (!tg) {
+            throw new Error("Telegram WebApp SDK not detected.");
+        }
+
+        if (!tg.initData) {
+            throw new Error(
+                "Telegram authentication data is missing. Open the Mini App through Telegram."
+            );
+        }
+
+        console.log("Telegram initData detected.");
 
         const data = await apiRequest("/api/status");
+
+        console.log("Backend response:", data);
 
         elements.pointsBalance.innerHTML =
             `${Number(data.points || 0).toLocaleString()} <small>PTS</small>`;
@@ -161,9 +174,13 @@ async function loadDashboard() {
         }
 
     } catch (error) {
-
         console.error("Dashboard error:", error);
 
+        showMessage(
+            elements.adMessage,
+            error.message || "Unable to connect to Project 44 backend.",
+            "error"
+        );
     }
 }
 
