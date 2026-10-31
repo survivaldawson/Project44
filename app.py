@@ -469,6 +469,7 @@ def health():
 # 7. DASHBOARD API
 # ==========================================
 
+
 @app.route("/api/status", methods=["GET"])
 def api_status():
 
@@ -480,6 +481,9 @@ def api_status():
     create_user(user)
 
     user_id = int(user["id"])
+
+    # NEW: Verify referral when user opens the Mini App.
+    verify_referral(user_id)
 
     with get_db() as db:
 
@@ -503,8 +507,7 @@ def api_status():
             "USDT": ASSET_RATES["USDT"]
         }
     })
-
-
+    
 # ==========================================
 # 8. AD SESSION API
 # ==========================================
