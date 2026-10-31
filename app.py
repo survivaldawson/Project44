@@ -215,14 +215,14 @@ def verify_telegram_init_data(init_data):
             hashlib.sha256
         ).hexdigest()
 
-if not hmac.compare_digest(
-    calculated_hash,
-    received_hash
-):
-    print("AUTH ERROR: Telegram initData hash mismatch")
-    return None
+                if not hmac.compare_digest(
+            calculated_hash,
+            received_hash
+        ):
+            print("AUTH ERROR: Telegram initData hash mismatch")
+            return None
 
-print("AUTH SUCCESS: Telegram initData verified")
+        print("AUTH SUCCESS: Telegram initData verified")
 
         user_data = json.loads(parsed.get("user", "{}"))
 
@@ -231,9 +231,9 @@ print("AUTH SUCCESS: Telegram initData verified")
 
         return user_data
 
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        print(f"AUTH ERROR: {e}")
         return None
-
 
 def require_user():
 
