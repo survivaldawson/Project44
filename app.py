@@ -343,6 +343,80 @@ def create_user(user_data, referral_id=None):
             ))
 
 
+def verify_referral(referred_id):
+    """Verify and credit a referral exactly once, atomically."""
+    referred_id = int(referred_id)
+    with get_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        referral = db.execute("""
+            SELECT referrer_id, status FROM referrals
+            WHERE referred_id = ?
+        """, (referred_id,)).fetchone()
+
+        if not referral or referral["status"] == "verified":
+            db.commit()
+            return False
+
+        referrer_id = int(referral["referrer_id"])
+        if referrer_id == referred_id:
+            db.execute("UPDATE referrals SET status='rejected' WHERE referred_id=?", (referred_id,))
+            db.commit()
+            return False
+
+        reference = f"referral:{referred_id}"
+        already_paid = db.execute(
+            "SELECT 1 FROM reward_ledger WHERE reference = ?", (reference,)
+        ).fetchone()
+
+        if already_paid:
+            db.execute("UPDATE referrals SET status='verified' WHERE referred_id=?", (referred_id,))
+            db.commit()
+            return False
+
+        db.execute("UPDATE users SET points = points + ? WHERE user_id = ?",
+                   (POINTS_PER_REFERRAL, referrer_id))
+        db.execute("""
+            INSERT INTO reward_ledger (user_id, points, reason, reference, created_at)
+            VALUES (?, ?, 'verified_referral', ?, ?)
+        """, (referrer_id, POINTS_PER_REFERRAL, reference, now()))
+        db.execute("UPDATE referrals SET status='verified' WHERE referred_id=?", (referred_id,)
+        )
+        db.commit()
+
+    notify_user(referrer_id, f"🎉 A referral has been verified! +{POINTS_PER_REFERRAL} points.")
+    return True
+
+
+def attach_referral_if_eligible(user_id, referral_id):
+    """Attach only if the user has never been referred; no self-referrals."""
+    try:
+        referrer_id = int(referral_id)
+        user_id = int(user_id)
+    except (ValueError, TypeError):
+        return False
+
+    if referrer_id == user_id:
+        return False
+
+    with get_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        referrer = db.execute("SELECT user_id FROM users WHERE user_id=?", (referrer_id,)).fetchone()
+        referred = db.execute("SELECT referred_by FROM users WHERE user_id=?", (user_id,)).fetchone()
+        prior = db.execute("SELECT 1 FROM referrals WHERE referred_id=?", (user_id,)).fetchone()
+
+        if not referrer or not referred or referred["referred_by"] or prior:
+            db.commit()
+            return False
+
+        db.execute("UPDATE users SET referred_by=? WHERE user_id=?", (referrer_id, user_id))
+        db.execute("""
+            INSERT INTO referrals (referrer_id, referred_id, status, created_at)
+            VALUES (?, ?, 'pending', ?)
+        """, (referrer_id, user_id, now()))
+        db.commit()
+        return True
+
+
 def get_available_points(db, user_id):
 
     user = db.execute(
