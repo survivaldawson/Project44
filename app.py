@@ -4,7 +4,8 @@ import json
 import hmac
 import hashlib
 import secrets
-import sqlite3
+import psycopg
+from psycopg.rows import dict_row
 import urllib.parse
 from datetime import datetime, timezone
 
@@ -29,7 +30,10 @@ ADMIN_USER_IDS = {
 
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
-DATABASE_PATH = os.getenv("DATABASE_PATH", "project44.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not configured. Add it to the Render environment.")
 
 POINTS_PER_REFERRAL = 5
 MIN_WITHDRAWAL = 500
@@ -49,23 +53,57 @@ app.config["JSON_SORT_KEYS"] = False
 # 2. DATABASE
 # ==========================================
 
+class DatabaseConnection:
+    """Compatibility wrapper preserving the existing execute/fetch API."""
+
+    def __init__(self):
+        self.connection = psycopg.connect(
+            DATABASE_URL,
+            row_factory=dict_row,
+            connect_timeout=10,
+        )
+
+    def execute(self, query, params=None):
+        # Existing application queries use SQLite-style question marks.
+        # Convert them to psycopg's PostgreSQL placeholders.
+        query = query.replace("?", "%s")
+        return self.connection.execute(query, params or ())
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            if exc_type is not None:
+                self.connection.rollback()
+            else:
+                self.connection.commit()
+        finally:
+            self.connection.close()
+
+
 def get_db():
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return DatabaseConnection()
 
 
 def init_db():
-
     with get_db() as db:
-
         db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
-                points INTEGER DEFAULT 0,
-                referred_by INTEGER,
+                points BIGINT NOT NULL DEFAULT 0,
+                referred_by BIGINT,
                 created_at TEXT
             )
         """)
@@ -73,14 +111,14 @@ def init_db():
         db.execute("""
             CREATE TABLE IF NOT EXISTS withdrawals (
                 request_id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 asset TEXT NOT NULL,
-                points INTEGER NOT NULL,
+                points BIGINT NOT NULL,
                 wallet_address TEXT,
                 network TEXT,
                 gift_telegram TEXT,
-                status TEXT DEFAULT 'pending',
-                estimated_usd REAL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                estimated_usd DOUBLE PRECISION,
                 created_at TEXT,
                 updated_at TEXT,
                 tx_reference TEXT
@@ -89,10 +127,10 @@ def init_db():
 
         db.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                referrer_id INTEGER NOT NULL,
-                referred_id INTEGER UNIQUE NOT NULL,
-                status TEXT DEFAULT 'pending',
+                id BIGSERIAL PRIMARY KEY,
+                referrer_id BIGINT NOT NULL,
+                referred_id BIGINT UNIQUE NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT
             )
         """)
@@ -100,17 +138,17 @@ def init_db():
         db.execute("""
             CREATE TABLE IF NOT EXISTS ad_sessions (
                 session_id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                status TEXT DEFAULT 'pending',
+                user_id BIGINT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT
             )
         """)
 
         db.execute("""
             CREATE TABLE IF NOT EXISTS reward_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                points INTEGER NOT NULL,
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                points BIGINT NOT NULL,
                 reason TEXT NOT NULL,
                 reference TEXT UNIQUE NOT NULL,
                 created_at TEXT
@@ -358,10 +396,10 @@ def verify_referral(referred_id):
     """Verify and credit a referral exactly once, atomically."""
     referred_id = int(referred_id)
     with get_db() as db:
-        db.execute("BEGIN IMMEDIATE")
         referral = db.execute("""
             SELECT referrer_id, status FROM referrals
             WHERE referred_id = ?
+            FOR UPDATE
         """, (referred_id,)).fetchone()
 
         if not referral or referral["status"] == "verified":
@@ -384,6 +422,7 @@ def verify_referral(referred_id):
             db.commit()
             return False
 
+        db.execute("SELECT user_id FROM users WHERE user_id = ? FOR UPDATE", (referrer_id,))
         db.execute("UPDATE users SET points = points + ? WHERE user_id = ?",
                    (POINTS_PER_REFERRAL, referrer_id))
         db.execute("""
@@ -410,9 +449,8 @@ def attach_referral_if_eligible(user_id, referral_id):
         return False
 
     with get_db() as db:
-        db.execute("BEGIN IMMEDIATE")
         referrer = db.execute("SELECT user_id FROM users WHERE user_id=?", (referrer_id,)).fetchone()
-        referred = db.execute("SELECT referred_by FROM users WHERE user_id=?", (user_id,)).fetchone()
+        referred = db.execute("SELECT referred_by FROM users WHERE user_id=? FOR UPDATE", (user_id,)).fetchone()
         prior = db.execute("SELECT 1 FROM referrals WHERE referred_id=?", (user_id,)).fetchone()
 
         if not referrer or not referred or referred["referred_by"] or prior:
@@ -698,6 +736,7 @@ def create_withdrawal():
 
     with get_db() as db:
 
+        db.execute("SELECT user_id FROM users WHERE user_id = ? FOR UPDATE", (user_id,))
         available = get_available_points(db, user_id)
 
         if available < points:
@@ -808,6 +847,7 @@ def admin_withdrawal_action(action, request_id, tx_reference=None):
         withdrawal = db.execute("""
             SELECT * FROM withdrawals
             WHERE request_id = ?
+            FOR UPDATE
         """, (request_id,)).fetchone()
 
         if not withdrawal:
@@ -847,6 +887,7 @@ def admin_withdrawal_action(action, request_id, tx_reference=None):
             account = db.execute("""
                 SELECT points FROM users
                 WHERE user_id = ?
+                FOR UPDATE
             """, (user_id,)).fetchone()
 
             if not account or account["points"] < points:
