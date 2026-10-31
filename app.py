@@ -169,11 +169,11 @@ def notify_user(user_id, message):
 def verify_telegram_init_data(init_data):
 
     if not BOT_TOKEN:
-    print("AUTH ERROR: BOT_TOKEN missing")
+        print("AUTH ERROR: BOT_TOKEN missing")
     return None
 
-if not init_data:
-    print("AUTH ERROR: initData missing")
+    if not init_data:
+      print("AUTH ERROR: initData missing")
     return None
 
     try:
