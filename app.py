@@ -215,7 +215,7 @@ def verify_telegram_init_data(init_data):
             hashlib.sha256
         ).hexdigest()
 
-        if not hmac.compare_digest(
+if not hmac.compare_digest(
     calculated_hash,
     received_hash
 ):
